@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Download, IndianRupee, Package, ReceiptText, Users } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import { db } from '../db'
 import { useApp } from '../context/AppContext'
 import { Button, Card, EmptyState, Input } from '../components/UI'
+import { addWorksheetFromObjects, downloadWorkbook } from '../utils/excel'
 import toast from 'react-hot-toast'
 
 const today = () => new Date().toISOString().split('T')[0]
@@ -137,41 +137,39 @@ export default function Reports() {
     return `Rs ${Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
   }
 
-  function handleExport() {
+  async function handleExport() {
     if (!filteredTransactions.length && !filteredPurchases.length) {
       toast.error('No report data to export for this range')
       return
     }
 
-    const workbook = XLSX.utils.book_new()
+    await downloadWorkbook(`EassyAcc_Report_${today()}.xlsx`, async workbook => {
+      addWorksheetFromObjects(workbook, 'Summary', [
+        {
+          From: dateFrom || 'Beginning',
+          To: dateTo || 'Today',
+          Sales: salesTotal,
+          Payments: paymentsTotal,
+          Outstanding: outstandingTotal,
+          PurchaseQuantity: purchaseQuantity,
+          LowStockItems: lowStockCount,
+        }
+      ])
 
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([
-      {
-        From: dateFrom || 'Beginning',
-        To: dateTo || 'Today',
-        Sales: salesTotal,
-        Payments: paymentsTotal,
-        Outstanding: outstandingTotal,
-        PurchaseQuantity: purchaseQuantity,
-        LowStockItems: lowStockCount,
-      }
-    ]), 'Summary')
+      addWorksheetFromObjects(workbook, 'Balances', customerBalances.map(entry => ({
+        Account: entry.name,
+        Sales: entry.sales,
+        Payments: entry.payments,
+        Balance: entry.balance,
+      })))
 
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(customerBalances.map(entry => ({
-      Account: entry.name,
-      Sales: entry.sales,
-      Payments: entry.payments,
-      Balance: entry.balance,
-    }))), 'Balances')
-
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(monthlySummary.map(entry => ({
-      Month: entry.month,
-      Sales: entry.sales,
-      Payments: entry.payments,
-      Balance: entry.balance,
-    }))), 'Monthly')
-
-    XLSX.writeFile(workbook, `EassyAcc_Report_${today()}.xlsx`)
+      addWorksheetFromObjects(workbook, 'Monthly', monthlySummary.map(entry => ({
+        Month: entry.month,
+        Sales: entry.sales,
+        Payments: entry.payments,
+        Balance: entry.balance,
+      })))
+    })
     toast.success('Report exported')
   }
 

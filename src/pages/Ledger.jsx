@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Pencil, Trash2, Download, BookOpen, Search } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import { db } from '../db'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { Button, Input, Select, Card, Modal, PasswordConfirmModal, Badge, EmptyState } from '../components/UI'
+import { addWorksheetFromObjects, downloadWorkbook } from '../utils/excel'
 import toast from 'react-hot-toast'
 
 function EditModal({ txn, onClose, onSaved }) {
@@ -138,7 +138,7 @@ export default function Ledger() {
     notifyDataChanged()
   }
 
-  function exportExcel() {
+  async function exportExcel() {
     if (!filtered.length) return toast.error('No data to export')
     const accName = accounts.find(a => a.id === parseInt(selectedAccount))?.name || 'Account'
     const rows = withBalance(filtered).map(t => ({
@@ -150,10 +150,12 @@ export default function Ledger() {
       Balance: t.balance,
       Narration: t.narration || '',
     }))
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Ledger')
-    XLSX.writeFile(wb, `Ledger_${accName}_${new Date().toISOString().split('T')[0]}.xlsx`)
+    await downloadWorkbook(
+      `Ledger_${accName}_${new Date().toISOString().split('T')[0]}.xlsx`,
+      async workbook => {
+        addWorksheetFromObjects(workbook, 'Ledger', rows)
+      }
+    )
     toast.success('Excel exported!')
   }
 
