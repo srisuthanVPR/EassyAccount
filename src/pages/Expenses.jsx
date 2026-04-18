@@ -4,8 +4,8 @@ import toast from 'react-hot-toast'
 import { db } from '../db'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { Button, Card, EmptyState, Input, Modal, PasswordConfirmModal, Select } from '../components/UI'
-import { formatCurrency, PAYMENT_MODE_OPTIONS, todayIso } from '../utils/finance'
+import { Badge, Button, Card, EmptyState, Input, Modal, PasswordConfirmModal, Select } from '../components/UI'
+import { calculateBankAccountSummary, calculateCashboxSummary, formatCurrency, getExpenseSource, getExpenseSourceLabel, normalizeAmount, todayIso } from '../utils/finance'
 
 function ExpenseForm({ form, setForm, onSubmit, loading }) {
   function set(field) {
@@ -19,8 +19,9 @@ function ExpenseForm({ form, setForm, onSubmit, loading }) {
       <Input label="Expense For / Purpose *" placeholder="Transport, salary, rent..." value={form.purpose} onChange={set('purpose')} />
       <div className="grid gap-3 sm:grid-cols-2">
         <Input label="Date *" type="date" value={form.date} onChange={set('date')} />
-        <Select label="Payment Mode *" value={form.paymentMode} onChange={set('paymentMode')}>
-          {PAYMENT_MODE_OPTIONS.filter(mode => mode !== 'Cheque').map(mode => <option key={mode} value={mode}>{mode}</option>)}
+        <Select label="Payment Source *" value={form.source} onChange={set('source')}>
+          <option value="cashbox">Cashbox</option>
+          <option value="bank">Bank Account</option>
         </Select>
       </div>
       <Input label="Category" placeholder="Optional category" value={form.category} onChange={set('category')} />
@@ -35,7 +36,7 @@ function ExpenseEditModal({ expense, onClose, onSave }) {
     amount: String(expense.amount || ''),
     purpose: expense.purpose || '',
     date: expense.date || todayIso(),
-    paymentMode: expense.paymentMode || 'Cash',
+    source: getExpenseSource(expense),
     narration: expense.narration || '',
     category: expense.category || '',
   })
@@ -50,8 +51,9 @@ function ExpenseEditModal({ expense, onClose, onSave }) {
       <Input label="Expense For / Purpose *" value={form.purpose} onChange={set('purpose')} />
       <div className="grid gap-3 sm:grid-cols-2">
         <Input label="Date *" type="date" value={form.date} onChange={set('date')} />
-        <Select label="Payment Mode *" value={form.paymentMode} onChange={set('paymentMode')}>
-          {PAYMENT_MODE_OPTIONS.filter(mode => mode !== 'Cheque').map(mode => <option key={mode} value={mode}>{mode}</option>)}
+        <Select label="Payment Source *" value={form.source} onChange={set('source')}>
+          <option value="cashbox">Cashbox</option>
+          <option value="bank">Bank Account</option>
         </Select>
       </div>
       <Input label="Category" value={form.category} onChange={set('category')} />
@@ -67,25 +69,48 @@ function ExpenseEditModal({ expense, onClose, onSave }) {
 export default function Expenses() {
   const { dataVersion, syncFinanceData } = useApp()
   const { verifyPassword } = useAuth()
-  const [form, setForm] = useState({ amount: '', purpose: '', date: todayIso(), paymentMode: 'Cash', narration: '', category: '' })
+  const [form, setForm] = useState({ amount: '', purpose: '', date: todayIso(), source: 'cashbox', narration: '', category: '' })
   const [loading, setLoading] = useState(false)
   const [expenses, setExpenses] = useState([])
   const [editingExpense, setEditingExpense] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
+  const [availableBalances, setAvailableBalances] = useState({ cashbox: 0, bank: 0 })
 
   useEffect(() => {
-    async function loadExpenses() {
-      const rows = await db.expenses.orderBy('date').reverse().toArray()
+    async function loadExpensesAndBalances() {
+      const [rows, cashState, bankState, cashEntries, bankEntries] = await Promise.all([
+        db.expenses.orderBy('date').reverse().toArray(),
+        db.cashState.get('primary'),
+        db.bankState.get('primary'),
+        db.cashboxTransactions.toArray(),
+        db.bankTransactions.toArray(),
+      ])
       setExpenses(rows)
+      setAvailableBalances({
+        cashbox: calculateCashboxSummary(cashState?.openingBalance, cashEntries).currentBalance,
+        bank: calculateBankAccountSummary(bankState?.openingBalance, bankEntries).currentBalance,
+      })
     }
 
-    loadExpenses()
+    loadExpensesAndBalances()
   }, [dataVersion])
+
+  function getEffectiveAvailableBalance(source, expense = null) {
+    const normalizedSource = source === 'bank' ? 'bank' : 'cashbox'
+    let balance = normalizeAmount(availableBalances[normalizedSource])
+
+    if (expense && getExpenseSource(expense) === normalizedSource) {
+      balance += normalizeAmount(expense.amount)
+    }
+
+    return balance
+  }
 
   async function handleCreate() {
     if (!form.amount || !form.purpose || !form.date) return toast.error('Amount, purpose, and date are required')
     const amount = Number(form.amount)
     if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a valid amount')
+    if (getEffectiveAvailableBalance(form.source) < amount) return toast.error('Insufficient balance')
 
     setLoading(true)
     try {
@@ -93,13 +118,14 @@ export default function Expenses() {
         amount,
         purpose: form.purpose.trim(),
         date: form.date,
-        paymentMode: form.paymentMode,
+        source: form.source,
+        paymentMode: form.source === 'bank' ? 'Bank Account' : 'Cashbox',
         narration: form.narration.trim(),
         category: form.category.trim(),
         createdAt: new Date().toISOString(),
       })
       await syncFinanceData()
-      setForm({ amount: '', purpose: '', date: todayIso(), paymentMode: 'Cash', narration: '', category: '' })
+      setForm({ amount: '', purpose: '', date: todayIso(), source: 'cashbox', narration: '', category: '' })
       toast.success('Expense recorded')
     } finally {
       setLoading(false)
@@ -110,6 +136,7 @@ export default function Expenses() {
     const amount = Number(formValues.amount)
     if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a valid amount')
     if (!formValues.purpose?.trim() || !formValues.date) return toast.error('Purpose and date are required')
+    if (getEffectiveAvailableBalance(formValues.source, editingExpense) < amount) return toast.error('Insufficient balance')
 
     setPendingAction({
       title: 'Confirm Expense Update',
@@ -121,7 +148,8 @@ export default function Expenses() {
           amount,
           purpose: formValues.purpose.trim(),
           date: formValues.date,
-          paymentMode: formValues.paymentMode,
+          source: formValues.source,
+          paymentMode: formValues.source === 'bank' ? 'Bank Account' : 'Cashbox',
           narration: formValues.narration.trim(),
           category: formValues.category.trim(),
           updatedAt: new Date().toISOString(),
@@ -173,11 +201,14 @@ export default function Expenses() {
                   <div>
                     <p className="text-sm font-semibold text-gray-800">{expense.purpose}</p>
                     <p className="text-xs text-gray-500 mt-1">
-                      {expense.date} | {expense.paymentMode} {expense.category ? `| ${expense.category}` : ''}
+                      {expense.date} {expense.category ? `| ${expense.category}` : ''}
                     </p>
                     {expense.narration && <p className="text-xs text-gray-400 mt-1">{expense.narration}</p>}
                   </div>
                   <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <Badge color={getExpenseSource(expense) === 'bank' ? 'blue' : 'orange'}>
+                      {getExpenseSourceLabel(getExpenseSource(expense))}
+                    </Badge>
                     <span className="text-sm font-semibold text-red-600">{formatCurrency(expense.amount)}</span>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setEditingExpense(expense)} className="p-2 hover:bg-gray-100 rounded-lg">

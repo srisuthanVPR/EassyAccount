@@ -39,6 +39,21 @@ export function isBankMode(mode) {
   return getFundingSource(mode) === 'bank'
 }
 
+export function getExpenseSource(expense = {}) {
+  const normalizedSource = String(expense.source || '').trim().toLowerCase()
+  if (normalizedSource === 'cashbox') return 'cashbox'
+  if (normalizedSource === 'bank' || normalizedSource === 'bank-account' || normalizedSource === 'bank account') return 'bank'
+
+  const fallback = getFundingSource(expense.paymentMode || expense.mode)
+  if (fallback === 'cash') return 'cashbox'
+  if (fallback === 'bank') return 'bank'
+  return 'cashbox'
+}
+
+export function getExpenseSourceLabel(source) {
+  return source === 'bank' ? 'Bank Account' : 'Cashbox'
+}
+
 export function calculateAccountBalance(account, transactions = []) {
   const openingBalance = normalizeAmount(account?.openingBalance)
   const totals = transactions.reduce((summary, transaction) => {
@@ -193,8 +208,8 @@ function buildMirrorEntries(transactions = [], expenses = []) {
     })
 
   expenses.forEach(expense => {
-    const mode = expense.paymentMode || expense.mode
-    const destination = getFundingSource(mode)
+    const source = getExpenseSource(expense)
+    const destination = source === 'bank' ? 'bank' : 'cash'
     if (!destination) return
 
     const entry = {
@@ -204,10 +219,11 @@ function buildMirrorEntries(transactions = [], expenses = []) {
       amount: normalizeAmount(expense.amount),
       direction: 'outflow',
       date: expense.date,
-      mode: mode || '',
+      mode: getExpenseSourceLabel(source),
       narration: expense.narration || '',
       purpose: expense.purpose || '',
       category: expense.category || '',
+      source,
       createdAt: expense.updatedAt || expense.createdAt || new Date().toISOString(),
     }
 
