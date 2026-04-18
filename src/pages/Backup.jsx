@@ -12,7 +12,7 @@ export default function Backup() {
   async function handleExport() {
     setLoading(true)
     try {
-      const [users, accounts, categories, banks, items, stock, transactions, purchases, expenses, cashboxTransactions, bankTransactions] = await Promise.all([
+      const [users, accounts, categories, banks, items, stock, transactions, purchases, expenses, cashboxTransactions, bankTransactions, bankState] = await Promise.all([
         db.users.toArray(),
         db.accounts.toArray(),
         db.categories.toArray(),
@@ -24,6 +24,7 @@ export default function Backup() {
         db.expenses.toArray(),
         db.cashboxTransactions.toArray(),
         db.bankTransactions.toArray(),
+        db.bankState.toArray(),
       ])
       const backup = {
         version: 2,
@@ -38,6 +39,7 @@ export default function Backup() {
         expenses,
         cashboxTransactions,
         bankTransactions,
+        bankState,
         exportedAt: new Date().toISOString()
       }
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
@@ -62,11 +64,11 @@ export default function Backup() {
       const data = JSON.parse(text)
       if (!Array.isArray(data.accounts) || !Array.isArray(data.transactions)) throw new Error('Invalid backup file')
 
-      await db.transaction('rw', [db.users, db.accounts, db.categories, db.banks, db.items, db.stock, db.transactions, db.purchases, db.expenses, db.cashboxTransactions, db.bankTransactions], async () => {
+      await db.transaction('rw', [db.users, db.accounts, db.categories, db.banks, db.items, db.stock, db.transactions, db.purchases, db.expenses, db.cashboxTransactions, db.bankTransactions, db.bankState], async () => {
         await db.users.clear()
         await db.accounts.clear(); await db.categories.clear(); await db.banks.clear()
         await db.items.clear(); await db.stock.clear(); await db.transactions.clear(); await db.purchases.clear()
-        await db.expenses.clear(); await db.cashboxTransactions.clear(); await db.bankTransactions.clear()
+        await db.expenses.clear(); await db.cashboxTransactions.clear(); await db.bankTransactions.clear(); await db.bankState.clear()
         if (data.users?.length) await db.users.bulkAdd(data.users)
         if (data.accounts?.length) await db.accounts.bulkAdd(data.accounts)
         if (data.categories?.length) await db.categories.bulkAdd(data.categories)
@@ -78,6 +80,7 @@ export default function Backup() {
         if (data.expenses?.length) await db.expenses.bulkAdd(data.expenses)
         if (data.cashboxTransactions?.length) await db.cashboxTransactions.bulkAdd(data.cashboxTransactions)
         if (data.bankTransactions?.length) await db.bankTransactions.bulkAdd(data.bankTransactions)
+        if (data.bankState?.length) await db.bankState.bulkAdd(data.bankState)
       })
       await refreshAllData()
       toast.success('Data restored successfully!')

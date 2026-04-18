@@ -93,6 +93,19 @@ export function calculateCashOrBankSummary(entries = []) {
   }, { inflow: 0, outflow: 0, balance: 0 })
 }
 
+// Bank balance = opening balance + inflows - outflows.
+export function calculateBankAccountSummary(openingBalance = 0, entries = []) {
+  const normalizedOpeningBalance = normalizeAmount(openingBalance)
+  const movement = calculateCashOrBankSummary(entries)
+
+  return {
+    openingBalance: normalizedOpeningBalance,
+    inflow: normalizeAmount(movement.inflow),
+    outflow: normalizeAmount(movement.outflow),
+    currentBalance: normalizedOpeningBalance + normalizeAmount(movement.inflow) - normalizeAmount(movement.outflow),
+  }
+}
+
 export function calculateProfitLoss(transactions = [], expenses = [], startDate = '', endDate = '') {
   const inRange = entry => {
     if (startDate && entry.date < startDate) return false
