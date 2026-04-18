@@ -1,41 +1,122 @@
 import { useEffect, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, Wallet } from 'lucide-react'
-import { Card, EmptyState } from '../components/UI'
-import { useApp } from '../context/AppContext'
-import { calculateCashOrBankSummary, formatCurrency, sortByDateAndTime } from '../utils/finance'
+import { liveQuery } from 'dexie'
+import { ArrowDownLeft, ArrowUpRight, Wallet, Pencil } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { Card, EmptyState, Button, Input, Modal, PasswordConfirmModal } from '../components/UI'
+import { useAuth } from '../context/AuthContext'
+import { calculateCashboxSummary, formatCurrency, normalizeAmount, sortByDateAndTime } from '../utils/finance'
 import { db } from '../db'
 
+function OpeningBalanceModal({ value, onClose, onSubmit }) {
+  const [amount, setAmount] = useState(String(normalizeAmount(value)))
+
+  return (
+    <Modal title="Edit Initial Amount" onClose={onClose}>
+      <p className="text-sm text-gray-500 mb-4">
+        Update the cash opening balance. This will be included in the current balance calculation immediately.
+      </p>
+      <Input
+        label="Initial Amount / Opening Balance"
+        type="number"
+        step="0.01"
+        value={amount}
+        onChange={e => setAmount(e.target.value)}
+      />
+      <div className="flex justify-end gap-3">
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button onClick={() => onSubmit(amount)}>Continue</Button>
+      </div>
+    </Modal>
+  )
+}
+
 export default function Cashbox() {
-  const { dataVersion } = useApp()
+  const { verifyPassword } = useAuth()
   const [entries, setEntries] = useState([])
+  const [openingBalance, setOpeningBalance] = useState(0)
+  const [showOpeningEditor, setShowOpeningEditor] = useState(false)
+  const [pendingOpeningBalance, setPendingOpeningBalance] = useState(null)
 
   useEffect(() => {
-    async function loadEntries() {
-      setEntries(sortByDateAndTime(await db.cashboxTransactions.toArray()).reverse())
+    const cashEntriesSubscription = liveQuery(() => db.cashboxTransactions.toArray()).subscribe({
+      next: rows => setEntries(sortByDateAndTime(rows).reverse()),
+      error: error => console.error('Failed to watch cash transactions', error),
+    })
+
+    const cashStateSubscription = liveQuery(() => db.cashState.get('primary')).subscribe({
+      next: state => setOpeningBalance(normalizeAmount(state?.openingBalance)),
+      error: error => console.error('Failed to watch cash opening balance', error),
+    })
+
+    return () => {
+      cashEntriesSubscription.unsubscribe()
+      cashStateSubscription.unsubscribe()
     }
+  }, [])
 
-    loadEntries()
-  }, [dataVersion])
+  const summary = calculateCashboxSummary(openingBalance, entries)
 
-  const summary = calculateCashOrBankSummary(entries)
+  function requestOpeningBalanceUpdate(rawAmount) {
+    const nextAmount = normalizeAmount(rawAmount)
+    setPendingOpeningBalance(nextAmount)
+    setShowOpeningEditor(false)
+  }
+
+  async function saveOpeningBalance() {
+    await db.cashState.put({
+      key: 'primary',
+      openingBalance: normalizeAmount(pendingOpeningBalance),
+      updatedAt: new Date().toISOString(),
+    })
+    setPendingOpeningBalance(null)
+    toast.success('Cash opening balance updated')
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Cashbox</h1>
-        <p className="text-sm text-gray-500 mt-1">Cash inflows and outflows generated automatically from payments and expenses.</p>
+        <p className="text-sm text-gray-500 mt-1">Opening balance plus live cash inflow and outflow tracking for cash movement.</p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card className="p-4"><p className="text-sm text-gray-500">Current Cash Balance</p><p className="text-2xl font-bold text-orange-600 mt-2">{formatCurrency(summary.balance)}</p></Card>
-        <Card className="p-4"><p className="text-sm text-gray-500">Cash Inflow</p><p className="text-2xl font-bold text-green-600 mt-2">{formatCurrency(summary.inflow)}</p></Card>
-        <Card className="p-4"><p className="text-sm text-gray-500">Cash Outflow</p><p className="text-2xl font-bold text-red-600 mt-2">{formatCurrency(summary.outflow)}</p></Card>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-gray-500">Initial Amount</p>
+              <p className="text-2xl font-bold text-slate-700 mt-2">{formatCurrency(summary.openingBalance)}</p>
+            </div>
+            <button
+              onClick={() => setShowOpeningEditor(true)}
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              aria-label="Edit initial amount"
+            >
+              <Pencil size={16} className="text-gray-500" />
+            </button>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <p className="text-sm text-gray-500">Total Inflow</p>
+          <p className="text-2xl font-bold text-green-600 mt-2">{formatCurrency(summary.inflow)}</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-sm text-gray-500">Total Outflow</p>
+          <p className="text-2xl font-bold text-red-600 mt-2">{formatCurrency(summary.outflow)}</p>
+        </Card>
+        <Card className="p-4 border-2 border-orange-100 bg-orange-50/40">
+          <p className="text-sm text-gray-500">Current Balance</p>
+          <p className={`text-2xl font-bold mt-2 ${summary.currentBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {formatCurrency(summary.currentBalance)}
+          </p>
+        </Card>
       </div>
 
       <Card className="overflow-hidden">
-        <div className="px-4 py-3 border-b"><h2 className="font-semibold text-gray-800">Transaction History</h2></div>
+        <div className="px-4 py-3 border-b">
+          <h2 className="font-semibold text-gray-800">Transaction History</h2>
+        </div>
         {entries.length === 0 ? (
-          <EmptyState icon={Wallet} message="No cash transactions recorded yet." />
+          <EmptyState icon={Wallet} message="No cash transactions recorded yet. Current balance will follow the initial amount." />
         ) : (
           <div className="divide-y">
             {entries.map(entry => (
@@ -45,8 +126,8 @@ export default function Cashbox() {
                     {entry.direction === 'inflow' ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-gray-800">{entry.sourceType === 'payment' ? 'Payment Receipt' : entry.purpose || 'Expense'}</p>
-                    <p className="text-xs text-gray-500 mt-1">{entry.date} | {entry.mode}</p>
+                    <p className="text-sm font-semibold text-gray-800">{entry.sourceType === 'payment' ? 'Payment' : 'Expense'}</p>
+                    <p className="text-xs text-gray-500 mt-1">{entry.date} | {entry.mode || 'Cash'}</p>
                     {entry.narration && <p className="text-xs text-gray-400 mt-1">{entry.narration}</p>}
                   </div>
                 </div>
@@ -58,6 +139,26 @@ export default function Cashbox() {
           </div>
         )}
       </Card>
+
+      {showOpeningEditor && (
+        <OpeningBalanceModal
+          value={summary.openingBalance}
+          onClose={() => setShowOpeningEditor(false)}
+          onSubmit={requestOpeningBalanceUpdate}
+        />
+      )}
+
+      {pendingOpeningBalance !== null && (
+        <PasswordConfirmModal
+          verifyPassword={verifyPassword}
+          title="Confirm Initial Amount Update"
+          message="Enter your password before saving the cash opening balance."
+          confirmLabel="Save Initial Amount"
+          tone="primary"
+          onConfirm={saveOpeningBalance}
+          onCancel={() => setPendingOpeningBalance(null)}
+        />
+      )}
     </div>
   )
 }

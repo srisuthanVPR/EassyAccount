@@ -58,6 +58,32 @@ db.version(3).stores({
   }
 })
 
+db.version(4).stores({
+  users: '++id, email',
+  categories: '++id, name',
+  banks: '++id, name',
+  accounts: '++id, name, category, bank',
+  items: '++id, name, unit',
+  stock: '++id, itemId',
+  transactions: '++id, accountId, type, date, mode',
+  purchases: '++id, accountId, itemId, date',
+  expenses: '++id, date, mode, category',
+  cashboxTransactions: '++id, sourceTable, sourceId, sourceType, date, direction',
+  bankTransactions: '++id, sourceTable, sourceId, sourceType, date, direction',
+  bankState: 'key',
+  cashState: 'key',
+}).upgrade(async tx => {
+  const cashState = tx.table('cashState')
+  const existing = await cashState.get('primary')
+  if (!existing) {
+    await cashState.put({
+      key: 'primary',
+      openingBalance: 0,
+      createdAt: new Date().toISOString(),
+    })
+  }
+})
+
 export async function seedCategories() {
   const count = await db.categories.count()
   if (count === 0) {
