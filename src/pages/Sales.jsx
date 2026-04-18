@@ -9,7 +9,7 @@ import toast from 'react-hot-toast'
 const today = () => new Date().toISOString().split('T')[0]
 
 export default function Sales() {
-  const { accounts, items, dataVersion, loadAccounts, loadItems, loadStock, notifyDataChanged } = useApp()
+  const { accounts, items, dataVersion, loadAccounts, loadItems, loadStock, syncFinanceData } = useApp()
   const { verifyPassword } = useAuth()
   const [form, setForm] = useState({ accountId: '', pricePerUnit: '', date: today(), quantity: '', narration: '', itemId: '' })
   const [loading, setLoading] = useState(false)
@@ -71,7 +71,7 @@ export default function Sales() {
       toast.success('Sale recorded')
       setForm({ accountId: '', pricePerUnit: '', date: today(), quantity: '', narration: '', itemId: '' })
       await loadStock()
-      notifyDataChanged()
+      await syncFinanceData()
     } finally {
       setLoading(false)
     }
@@ -90,7 +90,7 @@ export default function Sales() {
     toast.success('Sale deleted')
     setDeleteTxnId(null)
     await loadStock()
-    notifyDataChanged()
+    await syncFinanceData()
   }
 
   return (

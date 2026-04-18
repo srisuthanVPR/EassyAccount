@@ -1,6 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState } from 'react'
 import { db } from '../db'
+import {
+  clearRememberedLogin,
+  loadRememberedLogin,
+  saveRememberedLogin,
+} from '../utils/secureStorage'
 
 const AuthContext = createContext(null)
 
@@ -14,6 +19,7 @@ export function AuthProvider({ children }) {
   async function signUp(email, password, name) {
     const existing = await db.users.where('email').equals(email).first()
     if (existing) throw new Error('Email already registered')
+
     const id = await db.users.add({ email, password, name, createdAt: new Date().toISOString() })
     const newUser = { id, email, name }
     localStorage.setItem('eassyacc_user', JSON.stringify(newUser))
@@ -21,12 +27,20 @@ export function AuthProvider({ children }) {
     return newUser
   }
 
-  async function signIn(email, password) {
+  async function signIn(email, password, rememberMe = false) {
     const found = await db.users.where('email').equals(email).first()
     if (!found || found.password !== password) throw new Error('Invalid email or password')
+
     const sessionUser = { id: found.id, email: found.email, name: found.name }
     localStorage.setItem('eassyacc_user', JSON.stringify(sessionUser))
     setUser(sessionUser)
+
+    if (rememberMe) {
+      await saveRememberedLogin({ email, password })
+    } else {
+      clearRememberedLogin()
+    }
+
     return sessionUser
   }
 
@@ -35,7 +49,6 @@ export function AuthProvider({ children }) {
     setUser(null)
   }
 
-  // Verify password for delete confirmation
   async function verifyPassword(password) {
     if (!user) return false
     const found = await db.users.get(user.id)
@@ -43,7 +56,17 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signUp, signIn, logout, verifyPassword }}>
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      signUp,
+      signIn,
+      logout,
+      verifyPassword,
+      loadRememberedLogin,
+      clearRememberedLogin,
+    }}
+    >
       {children}
     </AuthContext.Provider>
   )

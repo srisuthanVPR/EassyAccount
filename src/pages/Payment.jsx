@@ -1,73 +1,76 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CreditCard, Trash2 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { db } from '../db'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { Button, Input, Select, Card, PasswordConfirmModal } from '../components/UI'
-import toast from 'react-hot-toast'
-
-const today = () => new Date().toISOString().split('T')[0]
-const fmt = n => '₹' + (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
+import { buildAccountSummaries, formatCurrency, PAYMENT_MODE_OPTIONS, todayIso } from '../utils/finance'
 
 export default function Payment() {
-  const { accounts, dataVersion, loadAccounts, notifyDataChanged } = useApp()
+  const { accounts, dataVersion, loadAccounts, syncFinanceData } = useApp()
   const { verifyPassword } = useAuth()
-  const [form, setForm] = useState({ accountId: '', amount: '', mode: 'Cash', date: today(), narration: '' })
+  const [form, setForm] = useState({ accountId: '', amount: '', mode: 'Cash', date: todayIso(), narration: '' })
   const [loading, setLoading] = useState(false)
   const [recent, setRecent] = useState([])
   const [deleteTxnId, setDeleteTxnId] = useState(null)
-  const [currentBalance, setCurrentBalance] = useState(null)
+  const [accountSummaries, setAccountSummaries] = useState([])
 
   useEffect(() => { loadAccounts() }, [loadAccounts])
-  useEffect(() => { loadRecent() }, [dataVersion])
 
-  // Fetch current balance for selected account
-  const fetchBalance = useCallback(async (accountId) => {
-    if (!accountId) { setCurrentBalance(null); return }
-    const txns = await db.transactions.where('accountId').equals(parseInt(accountId)).toArray()
-    const sales = txns.filter(t => t.type === 'sale').reduce((s, t) => s + (t.amount || 0), 0)
-    const payments = txns.filter(t => t.type === 'payment').reduce((s, t) => s + (t.amount || 0), 0)
-    setCurrentBalance(sales - payments)
-  }, [])
+  useEffect(() => {
+    async function loadRecent() {
+      const [transactions, paymentRows] = await Promise.all([
+        db.transactions.toArray(),
+        db.transactions.where('type').equals('payment').sortBy('date'),
+      ])
 
-  useEffect(() => { fetchBalance(form.accountId) }, [form.accountId, dataVersion, fetchBalance])
+      setAccountSummaries(buildAccountSummaries(accounts, transactions))
 
-  // Live updated balance preview
-  const enteredAmt = parseFloat(form.amount) || 0
-  const updatedBalance = currentBalance !== null ? currentBalance - enteredAmt : null
-  const isOverpayment = updatedBalance !== null && updatedBalance < 0
+      const recentRows = paymentRows.slice(-10).reverse()
+      const withNames = await Promise.all(recentRows.map(async transaction => {
+        const account = await db.accounts.get(transaction.accountId)
+        return { ...transaction, accountName: account?.name || 'Unknown' }
+      }))
+      setRecent(withNames)
+    }
 
-  async function loadRecent() {
-    const all = await db.transactions.where('type').equals('payment').sortBy('date')
-    const txns = all.slice(-10).reverse()
-    const withNames = await Promise.all(txns.map(async t => {
-      const acc = await db.accounts.get(t.accountId)
-      return { ...t, accountName: acc?.name || 'Unknown' }
-    }))
-    setRecent(withNames)
+    loadRecent()
+  }, [accounts, dataVersion])
+
+  function set(field) {
+    return e => setForm(prev => ({ ...prev, [field]: e.target.value }))
   }
 
-  function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
+  const currentAccount = useMemo(
+    () => accountSummaries.find(account => account.id === Number(form.accountId)),
+    [accountSummaries, form.accountId]
+  )
+
+  const enteredAmount = Number(form.amount || 0)
+  const updatedBalance = currentAccount ? currentAccount.balance - enteredAmount : null
+  const isOverpayment = updatedBalance !== null && updatedBalance < 0
 
   async function handleSave() {
-    if (!form.accountId || !form.amount) return toast.error('Account and amount required')
-    const amount = parseFloat(form.amount)
-    if (isNaN(amount) || amount <= 0) return toast.error('Invalid amount')
-    if (isOverpayment) return toast.error('Payment exceeds current balance')
+    if (!form.accountId || !form.amount) return toast.error('Account and amount are required')
+    const amount = Number(form.amount)
+    if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a valid amount')
+    if (isOverpayment) return toast.error('Payment exceeds current account balance')
+
     setLoading(true)
     try {
       await db.transactions.add({
-        accountId: parseInt(form.accountId),
+        accountId: Number(form.accountId),
         type: 'payment',
         amount,
         mode: form.mode,
         date: form.date,
-        narration: form.narration,
-        createdAt: new Date().toISOString()
+        narration: form.narration.trim(),
+        createdAt: new Date().toISOString(),
       })
+      await syncFinanceData()
+      setForm({ accountId: '', amount: '', mode: 'Cash', date: todayIso(), narration: '' })
       toast.success('Payment recorded')
-      setForm({ accountId: '', amount: '', mode: 'Cash', date: today(), narration: '' })
-      notifyDataChanged()
     } finally {
       setLoading(false)
     }
@@ -75,62 +78,61 @@ export default function Payment() {
 
   async function handleDelete() {
     await db.transactions.delete(deleteTxnId)
-    toast.success('Payment deleted')
+    await syncFinanceData()
     setDeleteTxnId(null)
-    notifyDataChanged()
+    toast.success('Payment deleted')
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-800 mb-6">Payment</h1>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-800">Payment</h1>
+        <p className="text-sm text-gray-500 mt-1">Payment mode decides whether the receipt lands in Cashbox or Bank Account.</p>
+      </div>
+
       <div className="grid lg:grid-cols-2 gap-6">
         <Card className="p-4">
-          <h2 className="font-semibold text-gray-700 mb-4 flex items-center gap-2"><CreditCard size={18} />Record Payment</h2>
+          <h2 className="font-semibold text-gray-700 mb-4 flex items-center gap-2"><CreditCard size={18} className="text-green-600" />Record Payment</h2>
           <Select label="Account *" value={form.accountId} onChange={set('accountId')}>
             <option value="">Select account</option>
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {accountSummaries.map(account => (
+              <option key={account.id} value={account.id}>
+                {account.name} ({formatCurrency(account.balance)})
+              </option>
+            ))}
           </Select>
 
-          {/* Balance preview panel */}
-          {form.accountId && currentBalance !== null && (
+          {currentAccount && (
             <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2 text-sm">
               <div className="flex justify-between">
+                <span className="text-gray-500">Opening Balance</span>
+                <span className="font-semibold text-gray-700">{formatCurrency(currentAccount.openingBalance)}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-500">Current Balance</span>
-                <span className={`font-semibold ${currentBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>{fmt(currentBalance)}</span>
+                <span className={`font-semibold ${currentAccount.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(currentAccount.balance)}</span>
               </div>
               {form.amount && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Payment Amount</span>
-                    <span className="font-semibold text-gray-700">{fmt(enteredAmt)}</span>
-                  </div>
-                  <div className="flex justify-between border-t pt-2">
-                    <span className="text-gray-600 font-medium">Updated Balance</span>
-                    <span className={`font-bold ${isOverpayment ? 'text-red-600' : updatedBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>
-                      {fmt(updatedBalance)}
-                    </span>
-                  </div>
-                  {isOverpayment && (
-                    <p className="text-xs text-red-500 font-medium">⚠ Payment exceeds current balance</p>
-                  )}
-                </>
+                <div className="flex justify-between border-t pt-2">
+                  <span className="text-gray-600 font-medium">Balance After Payment</span>
+                  <span className={`font-bold ${isOverpayment ? 'text-red-600' : updatedBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                    {formatCurrency(updatedBalance)}
+                  </span>
+                </div>
               )}
             </div>
           )}
 
-          <Input label="Amount (₹) *" type="number" placeholder="0.00" value={form.amount} onChange={set('amount')} />
-          <Select label="Mode" value={form.mode} onChange={set('mode')}>
-            <option value="Cash">Cash</option>
-            <option value="Bank">Bank Transfer</option>
-            <option value="UPI">UPI</option>
-            <option value="Cheque">Cheque</option>
+          <Input label="Amount *" type="number" placeholder="0.00" value={form.amount} onChange={set('amount')} />
+          <Select label="Payment Mode *" value={form.mode} onChange={set('mode')}>
+            {PAYMENT_MODE_OPTIONS.map(mode => <option key={mode} value={mode}>{mode}</option>)}
           </Select>
           <Input label="Date *" type="date" value={form.date} onChange={set('date')} />
           <Input label="Narration" placeholder="Notes..." value={form.narration} onChange={set('narration')} />
           <Button onClick={handleSave} loading={loading} variant="success" className="w-full justify-center">Record Payment</Button>
         </Card>
 
-        <Card>
+        <Card className="overflow-hidden">
           <div className="p-3 border-b">
             <h3 className="font-semibold text-gray-700 text-sm">Recent Payments</h3>
           </div>
@@ -138,15 +140,16 @@ export default function Payment() {
             <div className="p-8 text-center text-gray-400 text-sm">No payments yet</div>
           ) : (
             <div className="divide-y">
-              {recent.map(t => (
-                <div key={t.id} className="px-4 py-3 flex items-start justify-between">
+              {recent.map(transaction => (
+                <div key={transaction.id} className="px-4 py-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">{t.accountName}</p>
-                    <p className="text-xs text-gray-400">{t.date} • {t.mode}</p>
+                    <p className="text-sm font-medium text-gray-700">{transaction.accountName}</p>
+                    <p className="text-xs text-gray-400">{transaction.date} | {transaction.mode}</p>
+                    {transaction.narration && <p className="text-xs text-gray-400 mt-1">{transaction.narration}</p>}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-green-600">{fmt(t.amount)}</span>
-                    <button onClick={() => setDeleteTxnId(t.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                    <span className="text-sm font-semibold text-green-600">{formatCurrency(transaction.amount)}</span>
+                    <button onClick={() => setDeleteTxnId(transaction.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
                       <Trash2 size={14} className="text-red-400" />
                     </button>
                   </div>
@@ -160,6 +163,10 @@ export default function Payment() {
       {deleteTxnId && (
         <PasswordConfirmModal
           verifyPassword={verifyPassword}
+          title="Confirm Payment Deletion"
+          message="Enter your password before deleting this payment."
+          confirmLabel="Delete Payment"
+          tone="danger"
           onConfirm={handleDelete}
           onCancel={() => setDeleteTxnId(null)}
         />

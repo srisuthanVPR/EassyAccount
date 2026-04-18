@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
-  LayoutDashboard, UserPlus, Tag, ShoppingCart, Package,
-  TrendingUp, CreditCard, BookOpen, Menu, X, LogOut, ChevronDown, ChevronRight, Database, BarChart3
+  LayoutDashboard, UserPlus, Tag, ShoppingCart, Package, TrendingUp, CreditCard, BookOpen,
+  Menu, X, LogOut, ChevronDown, ChevronRight, Database, BarChart3, Wallet, Landmark, Receipt, ChartNoAxesCombined
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { db } from '../db'
@@ -19,6 +19,10 @@ const navItems = [
   { id: 'sales', label: 'Sales', icon: TrendingUp },
   { id: 'purchase', label: 'Purchase', icon: ShoppingCart },
   { id: 'payment', label: 'Payment', icon: CreditCard },
+  { id: 'expenses', label: 'Expenses', icon: Receipt },
+  { id: 'cashbox', label: 'Cashbox', icon: Wallet },
+  { id: 'bank-account', label: 'Bank Account', icon: Landmark },
+  { id: 'profit-loss', label: 'P/L', icon: ChartNoAxesCombined },
   { id: 'stock', label: 'Stock', icon: Package },
   { id: 'ledger', label: 'Ledger', icon: BookOpen },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
@@ -47,7 +51,7 @@ function SidebarContent({ active, expanded, dbStatus, user, onNavigate, onToggle
       <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
         {navItems.map(item => {
           const Icon = item.icon
-          const isActive = active === item.id || item.children?.some(c => c.id === active)
+          const isActive = active === item.id || item.children?.some(child => child.id === active)
           const isExpanded = expanded[item.id]
 
           if (item.children) {
@@ -109,7 +113,7 @@ export default function Sidebar({ active, onNavigate }) {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState({ entry: true })
-  const [dbStatus, setDbStatus] = useState('checking') // 'ok' | 'error' | 'checking'
+  const [dbStatus, setDbStatus] = useState('checking')
 
   useEffect(() => {
     db.open()
@@ -128,7 +132,6 @@ export default function Sidebar({ active, onNavigate }) {
 
   return (
     <>
-      {/* Mobile header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-blue-800 text-white flex items-center justify-between px-4 py-3 shadow-md">
         <div className="flex items-center gap-2 font-bold">
           <div className="w-7 h-7 bg-white/20 rounded flex items-center justify-center text-sm">E</div>
@@ -139,13 +142,11 @@ export default function Sidebar({ active, onNavigate }) {
         </button>
       </div>
 
-      {/* Mobile overlay */}
       {open && (
         <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setOpen(false)} />
       )}
 
-      {/* Mobile drawer */}
-      <div className={`lg:hidden fixed top-0 left-0 z-50 h-full w-64 bg-blue-800 transform transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`lg:hidden fixed top-0 left-0 z-50 h-full w-72 bg-blue-800 transform transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarContent
           active={active}
           expanded={expanded}
@@ -157,7 +158,6 @@ export default function Sidebar({ active, onNavigate }) {
         />
       </div>
 
-      {/* Desktop sidebar */}
       <div className="hidden lg:flex flex-col w-60 bg-blue-800 h-screen fixed left-0 top-0 z-30">
         <SidebarContent
           active={active}

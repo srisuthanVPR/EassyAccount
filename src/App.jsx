@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { Toaster } from 'react-hot-toast'
 import { useAuth } from './context/AuthContext'
 import { useApp } from './context/AppContext'
-import { seedBanks } from './db'
+import { seedBanks, seedCategories } from './db'
+import { rebuildDerivedData } from './utils/finance'
 import Sidebar from './components/Sidebar'
 import AuthPage from './pages/AuthPage'
 import Dashboard from './pages/Dashboard'
@@ -15,6 +16,10 @@ import Stock from './pages/Stock'
 import Ledger from './pages/Ledger'
 import Backup from './pages/Backup'
 import Reports from './pages/Reports'
+import Expenses from './pages/Expenses'
+import Cashbox from './pages/Cashbox'
+import BankAccount from './pages/BankAccount'
+import ProfitLoss from './pages/ProfitLoss'
 
 function AppLayout() {
   const [page, setPage] = useState('dashboard')
@@ -23,6 +28,8 @@ function AppLayout() {
   useEffect(() => {
     async function initializeApp() {
       await seedBanks()
+      await seedCategories()
+      await rebuildDerivedData()
       await loadAll()
     }
 
@@ -37,6 +44,10 @@ function AppLayout() {
     sales: <Sales />,
     purchase: <Purchase />,
     payment: <Payment />,
+    expenses: <Expenses />,
+    cashbox: <Cashbox />,
+    'bank-account': <BankAccount />,
+    'profit-loss': <ProfitLoss />,
     stock: <Stock />,
     ledger: <Ledger />,
     reports: <Reports />,

@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback } from 'react'
 import { db } from '../db'
+import { rebuildDerivedData } from '../utils/finance'
 
 const AppContext = createContext(null)
 
@@ -41,15 +42,36 @@ export function AppProvider({ children }) {
   }, [])
 
   const refreshAllData = useCallback(async () => {
+    await rebuildDerivedData()
+    await loadAll()
+    notifyDataChanged()
+  }, [loadAll, notifyDataChanged])
+
+  const syncFinanceData = useCallback(async () => {
+    await rebuildDerivedData()
     await loadAll()
     notifyDataChanged()
   }, [loadAll, notifyDataChanged])
 
   return (
     <AppContext.Provider value={{
-      accounts, categories, banks, items, stock, dataVersion,
-      loadAccounts, loadCategories, loadBanks, loadItems, loadStock, loadAll, notifyDataChanged, refreshAllData
-    }}>
+      accounts,
+      categories,
+      banks,
+      items,
+      stock,
+      dataVersion,
+      loadAccounts,
+      loadCategories,
+      loadBanks,
+      loadItems,
+      loadStock,
+      loadAll,
+      notifyDataChanged,
+      refreshAllData,
+      syncFinanceData,
+    }}
+    >
       {children}
     </AppContext.Provider>
   )
